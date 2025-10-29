@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JioTV Go Pro</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <style>
+    body { background-color: #0b0b0b; color: white; font-family: 'Poppins', sans-serif; }
+    .channel-card { transition: transform 0.2s, background 0.3s; }
+    .channel-card:hover { transform: scale(1.05); background-color: #1f1f1f; }
+    video { width: 100%; border-radius: 12px; background: black; }
+    #player-section { display: none; }
+    .scrollbar-hide::-webkit-scrollbar { display: none; }
+    select, input { color: black; }
+  </style>
+</head>
+<body class="p-3">
+
+  <!-- Header -->
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+    <h1 class="text-2xl font-bold text-red-500">📺 JioTV Go Pro</h1>
+    <div class="flex gap-2 w-full sm:w-auto">
+      <input id="search" type="text" placeholder="Search channel..." class="px-3 py-2 rounded-lg flex-1">
+      <select id="category" class="px-3 py-2 rounded-lg">
+        <option value="All">All</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Player -->
+  <div id="player-section" class="mb-4">
+    <video id="video" controls autoplay></video>
+    <div class="flex justify-between items-center mt-2 flex-wrap gap-2">
+      <div>
+        <button onclick="closePlayer()" class="bg-red-600 px-4 py-2 rounded-lg">Close</button>
+        <span id="now-playing" class="text-gray-400 ml-2"></span>
+      </div>
+      <div>
+        <label for="quality" class="text-sm mr-1">Quality:</label>
+        <select id="quality" class="px-2 py-1 rounded">
+          <option value="auto">Auto</option>
+          <option value="720">720p</option>
+          <option value="480">480p</option>
+          <option value="360">360p</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Channels -->
+  <div id="channels" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3 scrollbar-hide overflow-y-auto" style="max-height: 80vh;"></div>
+
+  <script>
+    const m3uUrl = "https://raw.githubusercontent.com/alex8875/m3u/refs/heads/main/jstar.m3u";
+    const proxy = "https://cors-proxy.fringe.zone/";
+    const channelsDiv = document.getElementById("channels");
+    const video = document.getElementById("video");
+    const search = document.getElementById("search");
+    const categorySelect = document.getElementById("category");
+    const playerSection = document.getElementById("player-section");
+    const nowPlaying = document.getElementById("now-playing");
+    const qualitySelect = document.getElementById("quality");
+    let channels = [];
+    let currentChannel = null;
+
+    async function loadM3U() {
+      try {
+        const res = await fetch(proxy + m3uUrl);
+        const text = await res.text();
+        const lines = text.split("\n");
+        let current = {};
+        const categories = new Set();
+
+        lines.forEach(line => {
+          if (line.startsWith("#EXTINF")) {
+            const name = line.split(",").pop().trim();
+            const logoMatch = line.match(/tvg-logo="(.*?)"/);
+            const groupMatch = line.match(/group-title="(.*?)"/);
+            const category = groupMatch ? groupMatch[1] : "Others";
+            current = {
+              name,
+              logo: logoMatch ? logoMatch[1] : "https://via.placeholder.com/150x100?text=No+Logo",
+              category
+            };
+            categories.add(category);
+          } else if (line.startsWith("http")) {
+            current.url = line.trim();
+            channels.push(current);
+          }
+        });
+
+        // Populate categories
+        [...categories].sort().forEach(cat => {
+          const option = document.createElement("option");
+          option.value = cat;
+          option.textContent = cat;
+          categorySelect.appendChild(option);
+        });
+
+        renderChannels(channels);
+      } catch (err) {
+        console.error("Failed to load playlist", err);
+        alert("❌ Unable to load playlist. Try again later.");
+      }
+    }
+
+    function renderChannels(list) {
+      channelsDiv.innerHTML = "";
+      list.forEach(ch => {
+        const card = document.createElement("div");
+        card.className = "channel-card bg-gray-800 p-2 rounded-lg text-center cursor-pointer";
+        card.innerHTML = `
+          <img src="${ch.logo}" class="rounded-md mx-auto mb-2 h-24 w-full object-cover">
+          <p class="text-sm font-semibold truncate">${ch.name}</p>
+          <p class="text-xs text-gray-400">${ch.category}</p>
+        `;
+        card.onclick = () => playChannel(ch);
+        channelsDiv.appendChild(card);
+      });
+    }
+
+    function playChannel(ch) {
+      playerSection.style.display = "block";
+      nowPlaying.textContent = "Now Playing: " + ch.name;
+      currentChannel = ch;
+      loadStream(ch.url);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function loadStream(url) {
+      const quality = qualitySelect.value;
+      let streamUrl = proxy + url;
+
+      // Example of adjusting URL if quality parameters exist
+      if (quality !== "auto" && url.includes("playlist")) {
+        streamUrl = streamUrl.replace("playlist", `playlist_${quality}`);
+      }
+
+      if (Hls.isSupported()) {
+        const hls = new Hls();
+        hls.loadSource(streamUrl);
+        hls.attachMedia(video);
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = streamUrl;
+      } else {
+        alert("Your browser does not support HLS playback.");
+      }
+    }
+
+    function closePlayer() {
+      video.pause();
+      video.src = "";
+      playerSection.style.display = "none";
+    }
+
+    // Events
+    search.addEventListener("input", e => {
+      const value = e.target.value.toLowerCase();
+      const filtered = channels.filter(ch => ch.name.toLowerCase().includes(value));
+      renderChannels(filtered);
+    });
+
+    categorySelect.addEventListener("change", () => {
+      const cat = categorySelect.value;
+      const filtered = cat === "All" ? channels : channels.filter(ch => ch.category === cat);
+      renderChannels(filtered);
+    });
+
+    qualitySelect.addEventListener("change", () => {
+      if (currentChannel) loadStream(currentChannel.url);
+    });
+
+    loadM3U();
+  </script>
+</body>
+</html>
